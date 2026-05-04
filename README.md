@@ -3,7 +3,7 @@
   <img src="assets/logo.png" width="160"/>
 </div>
   
-## Rethinking Video Generation Model for the Embodied World
+## [ICML 2026🔥🔥🔥] Rethinking Video Generation Model for the Embodied World
 
 [![hf_space](https://img.shields.io/badge/🤗-Leaderboard-blue.svg)](https://huggingface.co/spaces/DAGroup-PKU/RBench-Leaderboard/)
 [![arXiv](https://img.shields.io/badge/Arxiv-2601.15282-b31b1b.svg?logo=arXiv)](https://arxiv.org/abs/2601.15282)
