@@ -30,9 +30,9 @@
 This repository is the official implementation of our work, consisting of (i) RBench, a fine‑grained benchmark tailored for robotics video generation, and (ii) RoVid-X, a million‑scale dataset for training robotics video models. We reveal
 the limitations of current video foundation models and potential directions for improvement, offering new perspectives for researchers exploring the embodied domain using video world models. Our goal is to establish a solid foundation for the rigorous assessment and scalable training of video generation models in the field of physical AI, accelerating the progress of embodied AI toward general intelligence.
 ## 🔥 News
-* `[Ongoing]` 🔥 We are actively training a physically plausible robotic video world model and applying it for real-world deployment in downstream robotic tasks. Stay tuned!
-* `[2026.1.27]`  🔥 We are actively applying for the open-source process. Once the internal review is approved, we will release the RoVid-X robotic video dataset on [Hugging Face](https://huggingface.co/datasets/DAGroup-PKU/RoVid-X) and open-source the RBench on [Hugging Face](https://huggingface.co/datasets/DAGroup-PKU/RBench).
-* `[2026.1.22]`  🔥 Our [Research Paper](https://arxiv.org/abs/2601.15282) is now available.  The [Project Page](https://dagroup-pku.github.io/ReVidgen.github.io/) is created.
+* `[2026.05.21]` 🔥🔥🔥 We have released RoVid-X on Hugging Face. See [this repository](https://github.com/DAGroup-PKU/HumanNet/) for more details.
+* `[2026.01.27]`  🔥 We are actively applying for the open-source process. Once the internal review is approved, we will release the RoVid-X robotic video dataset on [Hugging Face](https://huggingface.co/datasets/DAGroup-PKU/RoVid-X) and open-source the RBench on [Hugging Face](https://huggingface.co/datasets/DAGroup-PKU/RBench).
+* `[2026.01.22]`  🔥 Our [Research Paper](https://arxiv.org/abs/2601.15282) is now available.  The [Project Page](https://dagroup-pku.github.io/ReVidgen.github.io/) is created.
 ## 🎥 Demo
 https://github.com/user-attachments/assets/3d00cf52-3631-41c2-9eca-b580404e710f
 
