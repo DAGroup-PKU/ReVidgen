@@ -217,7 +217,7 @@ def main():
     output_root = f"results/4_embodiments/{args.i2v_model_name}/{args.robot_type}"
 
     base_gpt  = os.path.join(output_root, "VQA/gpt")
-    base_qwen = os.path.join(output_root, "VQA/qwen")
+    base_qwen = os.path.join(output_root, "VQA", args.qwen_eval_name)
 
     process_single_model(base_gpt,  "gpt",  output_root)
     process_single_model(base_qwen, "qwen", output_root)
@@ -227,5 +227,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--i2v_model_name", type=str, default="wanx_i2v_baseline")
     parser.add_argument("--robot_type", type=str, default="humanoid")
+    parser.add_argument("--qwen_eval_name", type=str, default="qwen_local", choices=["qwen_api", "qwen_local"])
     args = parser.parse_args()
     main()

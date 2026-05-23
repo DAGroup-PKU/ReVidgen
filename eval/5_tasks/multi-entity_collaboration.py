@@ -8,6 +8,10 @@ import numpy as np
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 
+from transformers import AutoModelForImageTextToText, AutoProcessor
+import torch
+from torchvision.io import write_video
+
 from openai import OpenAI
 class Video_preprocess():
     def __init__(self):
@@ -383,6 +387,116 @@ def run_qwen():
     output_csv = os.path.join(args.output_path, 'results.csv')
     save_results_to_csv(results, output_csv)
 
+def ask_qwen_local(model, processor, question, image_path, max_new_tokens=1024):
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": question},
+                {"type": "image", "image": image_path}
+            ]
+        }
+    ]
+
+    inputs = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt"
+    )
+
+    inputs = inputs.to(model.device)
+
+    generated_ids = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens
+    )
+
+    reply = processor.batch_decode(
+        generated_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False
+    )[0].strip()
+
+    if "\nassistant" in reply:
+        reply = reply.split("\nassistant")[-1].strip()
+    elif "assistant" in reply:
+        reply = reply.split("assistant")[-1].strip()
+
+    return reply
+
+def run_qwen_local():
+    MODEL_NAME = args.qwen_model_path
+
+    processor = AutoProcessor.from_pretrained(MODEL_NAME)
+    model = AutoModelForImageTextToText.from_pretrained(
+        MODEL_NAME,
+        dtype="auto",
+        device_map="auto"
+    )
+    model.eval()
+
+    with open(args.read_prompt_file, 'r') as f:
+        prompts = json.load(f)
+
+    image_grid_path = args.image_grid_path
+    if image_grid_path is None or not os.path.exists(image_grid_path) or not os.listdir(image_grid_path):
+        video_preprocess = Video_preprocess()
+        image_grid_path = video_preprocess.convert_video_to_grid(args.video_path)
+
+    grid_images = sorted([f for f in os.listdir(image_grid_path) if f[0].isdigit()])
+
+    results = []
+
+    for grid_image_name in tqdm(grid_images):
+        image_index = int(grid_image_name[0:4]) - 1
+        prompt_info = prompts[image_index]
+        image_path = os.path.join(image_grid_path, grid_image_name)
+
+        Q = create_prompt(prompt_info["view"], prompt_info["prompt"],
+                          prompt_info["manipulated object"],prompt_info["entity1"],prompt_info["entity2"])
+
+        max_retries = 5
+        cleaned_output = None
+        last_raw_output = None
+
+        for attempt in range(max_retries):
+            try:
+                raw_output = ask_qwen_local(
+                    model=model,
+                    processor=processor,
+                    question=Q,
+                    image_path=image_path,
+                    max_new_tokens=args.max_new_tokens
+                )
+
+                last_raw_output = raw_output
+                cleaned_output = extract_json(raw_output)
+
+                if not isinstance(cleaned_output, dict):
+                    raise ValueError("JSON 缺少必要字段")
+
+                break
+
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    cleaned_output = {
+                        "score": -1,
+                        "reason": last_raw_output if last_raw_output else f"Error after {max_retries} attempts: {str(e)}"
+                    }
+
+        results.append({
+            "name": prompt_info["name"],
+            "prompt": prompt_info["prompt"],
+            "response": cleaned_output
+        })
+
+    os.makedirs(args.output_path, exist_ok=True)
+    output_csv = os.path.join(args.output_path, "results.csv")
+    save_results_to_csv(results, output_csv)
+
+
 # =================== 启动入口 ===================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -392,11 +506,14 @@ if __name__ == "__main__":
     parser.add_argument("--output_path", required=True, type=str)
     parser.add_argument("--api_key", type=str)
     parser.add_argument("--num_workers", type=int, default=min(8, cpu_count()))
-    parser.add_argument("--model", type=str, default="gpt", choices=["gpt", "qwen"])
-    
+    parser.add_argument("--model", type=str, default="gpt", choices=["gpt", "qwen_api", "qwen_local"])
+    parser.add_argument("--qwen_model_path", type=str)
+    parser.add_argument("--max_new_tokens", type=int, default=1024)    
     args = parser.parse_args()
 
     if args.model == "gpt":
         run_gpt()
-    else:
+    elif args.model == "qwen_api":
         run_qwen()
+    elif args.model == "qwen_local":
+        run_qwen_local()

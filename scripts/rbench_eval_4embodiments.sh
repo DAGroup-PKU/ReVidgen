@@ -1,10 +1,22 @@
+cd /polarfs/pzl/projects/ReVidgen || exit 1
+source /path/to/your/conda.sh
+
 i2v_models=("LTX-2 Wan2.2")
 robot_types=("dual_arm" "humanoid" "single_arm" "quad")
-vlm_list=("gpt" "qwen")   # gpt / qwen
+
+# Choose Qwen evaluation mode: qwen_api / qwen_local
+qwen_mode="qwen_local"
+
+# gpt + selected qwen evaluator
+vlm_list=("gpt" "$qwen_mode")
 
 # You need to replace the api key with your own
 gpt_api_key="sk-XXXXXXXX"
 qwen_api_key="sk-XXXXXXXX"
+
+qwen_model_path="/path/to/Qwen3-VL"
+
+conda activate rbench_vlm
 
 for I2VMODEL_NAME in "${i2v_models[@]}"; do
   echo "======================================================="
@@ -16,11 +28,15 @@ for I2VMODEL_NAME in "${i2v_models[@]}"; do
 
     if [[ "$VLM_NAME" == "gpt" ]]; then
         export API_KEY="$gpt_api_key"
-        export NUM_WORKER=8
+        EXTRA_ARGS="--api_key $API_KEY --num_workers 8"
 
-    elif [[ "$VLM_NAME" == "qwen" ]]; then
+    elif [[ "$VLM_NAME" == "qwen_api" ]]; then
         export API_KEY="$qwen_api_key"
-        export NUM_WORKER=1
+        EXTRA_ARGS="--api_key $API_KEY --num_workers 1"
+
+    elif [[ "$VLM_NAME" == "qwen_local" ]]; then
+        EXTRA_ARGS="--qwen_model_path $qwen_model_path --max_new_tokens 1024"
+
     else
         echo "❌ Unknown VLM_NAME: $VLM_NAME"
         exit 1
@@ -41,8 +57,7 @@ for I2VMODEL_NAME in "${i2v_models[@]}"; do
         --image_grid_path data/${I2VMODEL_NAME}/${ROBOT_TYPE}/image_grid_2frame \
         --output_path results/4_embodiments/${I2VMODEL_NAME}/${ROBOT_TYPE}/VQA/${VLM_NAME}/1_robot_subject_stability \
         --read_prompt_file data/prompts/${ROBOT_TYPE}_prompts.json \
-        --api_key "$API_KEY" \
-        --num_workers "$NUM_WORKER"
+        $EXTRA_ARGS
 
       echo "Step 2: physical plausibility evaluation (${VLM_NAME})..."
       python eval/4_embodiments/2_physical_plausibility.py \
@@ -51,8 +66,7 @@ for I2VMODEL_NAME in "${i2v_models[@]}"; do
         --image_grid_path data/${I2VMODEL_NAME}/${ROBOT_TYPE}/image_grid_6frame \
         --output_path results/4_embodiments/${I2VMODEL_NAME}/${ROBOT_TYPE}/VQA/${VLM_NAME}/2_physical_plausibility \
         --read_prompt_file data/prompts/${ROBOT_TYPE}_prompts.json \
-        --api_key "$API_KEY" \
-        --num_workers "$NUM_WORKER"
+        $EXTRA_ARGS
 
       echo "Step 3: task adherence consistency evaluation (${VLM_NAME})..."
       python eval/4_embodiments/3_task_adherence_consistency.py \
@@ -61,8 +75,7 @@ for I2VMODEL_NAME in "${i2v_models[@]}"; do
         --image_grid_path data/${I2VMODEL_NAME}/${ROBOT_TYPE}/image_grid_6frame \
         --output_path results/4_embodiments/${I2VMODEL_NAME}/${ROBOT_TYPE}/VQA/${VLM_NAME}/3_task_adherence_consistency \
         --read_prompt_file data/prompts/${ROBOT_TYPE}_prompts.json \
-        --api_key "$API_KEY" \
-        --num_workers "$NUM_WORKER"
+        $EXTRA_ARGS
     done
   done
 
@@ -70,6 +83,7 @@ for I2VMODEL_NAME in "${i2v_models[@]}"; do
   #   Step 4~7：Motion
   # =====================================================
   echo "🚀 Start evaluating Motion-related metrics"
+  conda activate rbench_ops
   for ROBOT_TYPE in "${robot_types[@]}"; do
     echo "------------------------------"
     echo "ROBOT TYPE: ${ROBOT_TYPE}"
@@ -94,7 +108,7 @@ for I2VMODEL_NAME in "${i2v_models[@]}"; do
     python eval/4_embodiments/7_motion_total_score.py --meta_info_path $META_INFO_PATH
 
     echo "Step 8: ${ROBOT_TYPE} Results..."
-    python eval/4_embodiments/8_summarize_robot_results.py --i2v_model_name $I2VMODEL_NAME --robot_type $ROBOT_TYPE
+    python eval/4_embodiments/8_summarize_robot_results.py --i2v_model_name $I2VMODEL_NAME --robot_type $ROBOT_TYPE --qwen_eval_name "$qwen_mode"
   done
   
   echo "🎉 Finish $I2VMODEL_NAME Evaluation"
@@ -104,4 +118,3 @@ done
 
 echo "🎉 Evaluation completed for all I2V models！"
 python eval/4_embodiments/summary_scores.py --root_dir results/4_embodiments
-

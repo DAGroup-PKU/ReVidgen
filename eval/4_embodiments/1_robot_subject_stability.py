@@ -12,19 +12,23 @@ from multiprocessing import Pool, cpu_count
 from openai import OpenAI
 import time, random
 
+from transformers import AutoModelForImageTextToText, AutoProcessor
+import torch
+from torchvision.io import write_video
+
 def create_llm_client(model_name, api_key):
     if model_name.lower() == "gpt":
         return OpenAI(api_key=api_key
         ), "gpt-5-2025-08-07"
 
-    elif model_name.lower() == "qwen":
+    elif model_name.lower() == "qwen_api":
         return OpenAI(
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             api_key=api_key
         ), "qwen3-vl-235b-a22b-instruct"
 
     else:
-        raise ValueError("❌ Unsupported --model, choose from: gpt, qwen")
+        raise ValueError("❌ Unsupported --model, choose from: gpt, qwen_api")
 
 class Video_preprocess():
     def __init__(self):
@@ -222,6 +226,159 @@ def score_mapping(opt_str):
     keys = tuple(opt_str.split(','))
     return mapping.get(keys, "bad reply")
 
+def ask_qwen_local(model, processor, question, image_path, max_new_tokens=1024):
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": question},
+                {"type": "image", "image": image_path}
+            ]
+        }
+    ]
+
+    inputs = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt"
+    )
+
+    inputs = inputs.to(model.device)
+
+    generated_ids = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens
+    )
+
+    reply = processor.batch_decode(
+        generated_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False
+    )[0].strip()
+
+    if "\nassistant" in reply:
+        reply = reply.split("\nassistant")[-1].strip()
+    elif "assistant" in reply:
+        reply = reply.split("assistant")[-1].strip()
+
+    return reply
+
+def process_single_image_qwen_local(grid_image_name, image_grid_path, prompts, model, processor, max_new_tokens=1024):
+    try:
+        image_index = int(grid_image_name[0:4]) - 1
+        prompt_info = prompts[image_index]
+
+        phrase_1 = prompt_info["robotic manipulator"]
+        phrase_2 = prompt_info["manipulated object"]
+        full_prompt = prompt_info["prompt"]
+        image_path = os.path.join(image_grid_path, grid_image_name)
+
+        E1 = analyze_phrase(phrase_1)
+        phrase_1_lower = phrase_1.lower()
+        has_gripper = re.search(r'\bgrippers?\b', phrase_1_lower)
+        has_hand = re.search(r'\bhands?\b', phrase_1_lower)
+
+        if has_gripper or has_hand:
+            Q1 = f''' 
+The provided image shows two sequential frames from an AI-generated video about robot doing a task. 
+The left frame is the correct reference image, while the right frame is the AI-generated video frame. 
+Focuse on how '{phrase_1}' appears in both frames, and evaluate the consistency of '{phrase_1}' between the reference and the generated frame.
+
+Note: 
+1) Pay special attention to distinguishing between robotic gripper and robotic hand (if visible). Robotic gripper usually has a small number of rigid gripping jaws or prongs, while a robotic hand has multiple articulated fingers and more complex structures.
+2) Changes in orientation or position are acceptable and should not affect the consistency rating.
+3) Important: Do NOT assign option A or B lightly. 
+
+Question:
+A: '{phrase_1}' in the right frame is clear and consistent with the left image.  
+B: '{phrase_1}' in the right frame is mostly consistent with the left image, with minor visual issues.  
+C: '{phrase_1}' in the right frame shows noticeable inconsistencies compared with the left image, such as changes in shape, structure.  
+D: '{phrase_1}' in the right frame is highly inconsistent with the left image, transforms into another type of '{phrase_1}'.
+E: {E1}
+The options A to E represent increasing levels of inconsistency, select the most suitable option.
+Put the option in JSON format with the following keys: option (e.g., A), explanation (explaining the option made within 50 words), adjust (adjusted option after explanation, e.g., C).
+'''
+        else:
+            Q1 = f''' 
+The provided image shows two sequential frames from an AI-generated video about robot doing a task. 
+The left frame is the correct reference image, while the right frame is the AI-generated video frame. 
+Focuse on how '{phrase_1}' appears in both frames, and evaluate the consistency of '{phrase_1}' between the reference and the generated frame.
+Note: 
+1) If the subject has a robotic gripper/hand, pay special attention to distinguishing between robotic gripper and robotic hand. Robotic gripper usually has a small number of rigid gripping jaws or prongs, while a robotic hand has multiple articulated fingers and more complex structures.
+2) Changes in orientation or position are acceptable and should not affect the consistency rating.
+3) Important: Do NOT assign option A or B lightly. 
+
+Question:
+A: '{phrase_1}' in the right frame is clear and consistent with the left image.  
+B: '{phrase_1}' in the right frame is mostly consistent with the left image, with minor visual issues.  
+C: '{phrase_1}' in the right frame shows noticeable inconsistencies compared with the left image, such as changes in shape, structure.  
+D: '{phrase_1}' in the right frame is highly inconsistent with the left image, transforms into another type of '{phrase_1}'.
+E: {E1}
+The options A to E represent increasing levels of inconsistency, select the most suitable option.
+Put the option in JSON format with the following keys: option (e.g., A), explanation (explaining the option made within 50 words), adjust (adjusted option after explanation, e.g., C).
+'''
+
+        Q2 = f'''
+The provided image shows two sequential frames from an AI-generated video about robot doing a task. 
+The left frame is the correct reference image, while the right frame is the AI-generated video frame. 
+Focuse on how '{phrase_2}' appears in both frames, and evaluate the consistency of '{phrase_2}' between the reference and the generated frame.
+
+Note: 
+1) Changes in orientation or position are acceptable and should not affect the consistency rating.
+2) Important: Do NOT assign option A or B lightly. 
+
+Question: 
+A: '{phrase_2}' in the right frame is clear and consistent with the left image.
+B: '{phrase_2}' in the right frame is mostly consistent with the left image, with minor visual issues. 
+C: '{phrase_2}' in the right frame shows noticeable inconsistencies compared with the left image.  
+D: '{phrase_2}' in the right frame undergoes a major transformation, appears as an AI-generated artifact or is duplicated compared with the left image.  
+E: '{phrase_2}' is missing in the right frame while it exists in the left image.
+
+The options A to E represent increasing levels of inconsistency, select the most suitable option.
+Put the option in JSON format with the following keys: option (e.g., A), explanation (explaining the option made within 50 words), adjust (adjusted option after explanation, e.g., C).
+'''
+
+        try:
+            output_1 = ask_qwen_local(model, processor, Q1, image_path, max_new_tokens=max_new_tokens)
+            json_obj_1 = extract_json(output_1)
+
+            if str(phrase_2).strip().lower() == "none":
+                phrase_2 = None
+
+            if phrase_2:
+                output_2 = ask_qwen_local(model, processor, Q2, image_path, max_new_tokens=max_new_tokens)
+                json_obj_2 = extract_json(output_2)
+                option_value = f"{json_obj_1['adjust']}1,{json_obj_2['adjust']}2"
+                score_tmp = score_mapping(option_value)
+                explanation_q2 = json_obj_2.get("explanation", "")
+            else:
+                option_value = f"{json_obj_1['adjust']}1"
+                score_tmp = score_mapping(option_value)
+                explanation_q2 = ""
+
+        except Exception as e:
+            option_value, score_tmp = "bad reply", "bad reply"
+            json_obj_1 = {"explanation": ""}
+            explanation_q2 = ""
+            print(f"⚠️ local qwen reply wrong format at {grid_image_name}: {e}")
+
+        return {
+            "name": grid_image_name,
+            "prompt": full_prompt,
+            "robotic_phrase": phrase_1,
+            "object_phrase": phrase_2,
+            "option": option_value,
+            "score": score_tmp,
+            "explanation_q1": json_obj_1.get("explanation", ""),
+            "explanation_q2": explanation_q2
+        }
+
+    except Exception as e:
+        print(f"[Error] {grid_image_name}: {str(e)}")
+        return None
+
 def process_single_image(args_tuple):
     grid_image_name, image_grid_path, prompts, api_key = args_tuple
 
@@ -364,17 +521,41 @@ def main():
 
     grid_images = sorted([f for f in os.listdir(image_grid_path) if f[0].isdigit()])
 
-    task_args = [(img, image_grid_path, prompts, args.api_key) for img in grid_images]
+    if args.model == "qwen_local":
+        processor = AutoProcessor.from_pretrained(args.qwen_model_path)
+        model = AutoModelForImageTextToText.from_pretrained(
+            args.qwen_model_path,
+            dtype="auto",
+            device_map="auto"
+        )
+        model.eval()
 
-    with Pool(processes=args.num_workers) as pool:
-        results = list(tqdm(pool.imap(process_single_image, task_args), total=len(task_args)))
+        results = []
+        for img in tqdm(grid_images):
+            row = process_single_image_qwen_local(
+                grid_image_name=img,
+                image_grid_path=image_grid_path,
+                prompts=prompts,
+                model=model,
+                processor=processor,
+                max_new_tokens=args.max_new_tokens
+            )
+            results.append(row)
+
+    else:
+        task_args = [(img, image_grid_path, prompts, args.api_key) for img in grid_images]
+
+        with Pool(processes=args.num_workers) as pool:
+            results = list(tqdm(pool.imap(process_single_image, task_args), total=len(task_args)))
 
     os.makedirs(args.output_path, exist_ok=True)
     output_csv = os.path.join(args.output_path, 'results.csv')
+
     with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
         fieldnames = ["name", "prompt", "robotic_phrase", "object_phrase", "option", "score", "explanation_q1", "explanation_q2"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
+
         for row in results:
             if row:
                 writer.writerow(row)
@@ -387,6 +568,8 @@ if __name__ == "__main__":
     parser.add_argument("--output_path", type=str, required=True)
     parser.add_argument("--api_key", type=str)
     parser.add_argument("--num_workers", type=int, default=min(8, cpu_count()))
-    parser.add_argument("--model", type=str, default="gpt", choices=["gpt", "qwen"])
+    parser.add_argument("--model", type=str, default="gpt", choices=["gpt", "qwen_api", "qwen_local"])
+    parser.add_argument("--qwen_model_path", type=str)
+    parser.add_argument("--max_new_tokens", type=int, default=1024)    
     args = parser.parse_args()
     main()

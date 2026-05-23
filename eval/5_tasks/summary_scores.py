@@ -4,7 +4,7 @@ from tqdm import tqdm
 import argparse
 
 
-def process_model(model_dir):
+def process_model(model_dir, qwen_eval_name="qwen_local"):
     model_name = os.path.basename(model_dir.rstrip("/"))
 
     task_means_gpt = {}
@@ -19,7 +19,7 @@ def process_model(model_dir):
             continue
 
         gpt_csv = os.path.join(task_path, "gpt", "results.csv")
-        qwen_csv = os.path.join(task_path, "qwen", "results.csv")
+        qwen_csv = os.path.join(task_path, qwen_eval_name, "results.csv")
 
         df_gpt = None
         df_qwen = None
@@ -81,6 +81,7 @@ def main():
     parser = argparse.ArgumentParser(description="汇总多个模型的 GPT 与 QWEN 结果")
     parser.add_argument(
         "--root_dir", type=str, required=True)
+    parser.add_argument("--qwen_eval_name", type=str, default="qwen_local")
     args = parser.parse_args()
 
     root_dir = args.root_dir
@@ -94,7 +95,7 @@ def main():
     results = []
 
     for model_dir in tqdm(model_dirs, desc="Processing i2v models"):
-        r = process_model(model_dir)
+        r = process_model(model_dir, qwen_eval_name=args.qwen_eval_name)
         if r:
             results.append(r)
 

@@ -9,20 +9,24 @@ from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 from openai import OpenAI
 
+from transformers import AutoModelForImageTextToText, AutoProcessor
+import torch
+from torchvision.io import write_video
 
 def create_llm_client(model_name, api_key):
-    if model_name.lower() == "gpt":
-        return OpenAI(api_key=api_key
-        ), "gpt-5-2025-08-07"
+    model_name = model_name.lower()
 
-    elif model_name.lower() == "qwen":
+    if model_name == "gpt":
+        return OpenAI(api_key=api_key), "gpt-5-2025-08-07"
+
+    elif model_name in ["qwen", "qwen_api"]:
         return OpenAI(
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             api_key=api_key
         ), "qwen3-vl-235b-a22b-instruct"
 
     else:
-        raise ValueError("❌ Unsupported --model, choose from: gpt, qwen")
+        raise ValueError("❌ Unsupported API model, choose from: gpt, qwen_api")
 
 class Video_preprocess():
     def __init__(self):
@@ -182,6 +186,78 @@ def save_results_to_csv(results, output_csv):
                 'prompt': result['prompt'],
                 'reason': reason
             })
+def ask_qwen_local(model, processor, question, image_path, max_new_tokens=1024):
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": question},
+                {"type": "image", "image": image_path}
+            ]
+        }
+    ]
+
+    inputs = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt"
+    )
+
+    inputs = inputs.to(model.device)
+
+    generated_ids = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens
+    )
+
+    reply = processor.batch_decode(
+        generated_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False
+    )[0].strip()
+
+    if "\nassistant" in reply:
+        reply = reply.split("\nassistant")[-1].strip()
+    elif "assistant" in reply:
+        reply = reply.split("assistant")[-1].strip()
+
+    return reply
+def process_single_image_qwen_local(grid_image_name, image_grid_path, prompts, model, processor, max_new_tokens=1024):
+    try:
+        image_index = int(grid_image_name[0:4]) - 1
+        prompt_info = prompts[image_index]
+
+        full_prompt = prompt_info["prompt"]
+        image_path = os.path.join(image_grid_path, grid_image_name)
+
+        Q = create_prompt(prompt_info["view"], full_prompt)
+
+        raw_output = ask_qwen_local(
+            model=model,
+            processor=processor,
+            question=Q,
+            image_path=image_path,
+            max_new_tokens=max_new_tokens
+        )
+
+        try:
+            cleaned_output = extract_json(raw_output)
+            if not isinstance(cleaned_output, dict) or "score" not in cleaned_output or "reason" not in cleaned_output:
+                raise ValueError("JSON缺少必要字段")
+        except Exception:
+            cleaned_output = {"score": -1, "reason": raw_output}
+
+        return {
+            "name": prompt_info["name"],
+            "prompt": prompt_info["prompt"],
+            "response": cleaned_output
+        }
+
+    except Exception as e:
+        print(f"[Error] {grid_image_name}: {str(e)}")
+        return None
 
 def process_single_image(args_tuple):
     grid_image_name, image_grid_path, prompts, api_key = args_tuple
@@ -241,10 +317,32 @@ def main():
 
     grid_images = sorted([f for f in os.listdir(image_grid_path) if f[0].isdigit()])
 
-    task_args = [(img, image_grid_path, prompts, args.api_key) for img in grid_images]
+    if args.model == "qwen_local":
+        processor = AutoProcessor.from_pretrained(args.qwen_model_path)
+        model = AutoModelForImageTextToText.from_pretrained(
+            args.qwen_model_path,
+            dtype="auto",
+            device_map="auto"
+        )
+        model.eval()
 
-    with Pool(processes=args.num_workers) as pool:
-        results = list(tqdm(pool.imap(process_single_image, task_args), total=len(task_args)))
+        results = []
+        for img in tqdm(grid_images):
+            row = process_single_image_qwen_local(
+                grid_image_name=img,
+                image_grid_path=image_grid_path,
+                prompts=prompts,
+                model=model,
+                processor=processor,
+                max_new_tokens=args.max_new_tokens
+            )
+            results.append(row)
+
+    else:
+        task_args = [(img, image_grid_path, prompts, args.api_key) for img in grid_images]
+
+        with Pool(processes=args.num_workers) as pool:
+            results = list(tqdm(pool.imap(process_single_image, task_args), total=len(task_args)))
 
     os.makedirs(args.output_path, exist_ok=True)
     output_csv = os.path.join(args.output_path, 'results.csv')
@@ -258,6 +356,8 @@ if __name__ == "__main__":
     parser.add_argument("--output_path", type=str, required=True, help="输出 CSV 文件路径")
     parser.add_argument("--api_key", type=str)
     parser.add_argument("--num_workers", type=int, default=min(8, cpu_count()))
-    parser.add_argument("--model", type=str, default="gpt", choices=["gpt", "qwen"])
+    parser.add_argument("--model", type=str, default="gpt", choices=["gpt", "qwen_api", "qwen_local"])
+    parser.add_argument("--qwen_model_path", type=str)
+    parser.add_argument("--max_new_tokens", type=int, default=1024)        
     args = parser.parse_args()
     main()
