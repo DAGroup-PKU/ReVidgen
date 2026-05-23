@@ -1,24 +1,13 @@
 # =========================
 # RBench VLM Evaluation Env
-# Excluding torch / torchvision
-# Install torch separately:
-#   pip install torch==2.5.1 torchvision==0.20.1
 # =========================
-
-# Basic
 numpy
 tqdm
 pillow
 opencv-python
-
-# API-based VLM evaluation: GPT / Qwen API
 openai
-
-# Local Qwen-VL evaluation
 transformers
 accelerate
-
-# Optional but commonly useful
 scipy
 scikit-learn
 pandas
