@@ -47,14 +47,19 @@ https://github.com/user-attachments/assets/3d00cf52-3631-41c2-9eca-b580404e710f
 git clone https://github.com/DAGroup-PKU/ReVidgen.git
 cd ReVidgen
 
-# 1. Environment for RBench
-conda create -n rbench python=3.10.18
-conda activate rbench
+# 1. Environment for RBench VLM evaluation
+conda create -n rbench_vlm python=3.10.18 -y
+conda activate rbench_vlm
 
-pip install --upgrade setuptools
+pip install torch==2.5.1 torchvision==0.20.1
+pip install -r requirements_vlm.txt
+
+# 2、Environment for RBench low-level operators
+conda create -n rbench_ops python=3.10.18 -y
+conda activate rbench_ops
+
 pip install torch==2.5.1 torchvision==0.20.1
 
-# Install Grounded-Segment-Anything module
 cd pkgs/Grounded-Segment-Anything
 python -m pip install -e segment_anything
 pip install --no-build-isolation -e GroundingDINO
@@ -70,7 +75,6 @@ pip install -e .
 
 cd ..
 pip install -r requirements.txt
-
 ```
 ### Download Checkpoints
 
